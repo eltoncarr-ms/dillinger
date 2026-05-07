@@ -262,6 +262,30 @@ body {
   color: #D3DAEA;
 }
 
+/* Mermaid diagrams */
+.preview-html pre.mermaid {
+  background: transparent;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  text-align: center;
+  font-family: inherit;
+  white-space: normal;
+}
+
+.preview-html pre.mermaid svg {
+  max-width: 100%;
+  height: auto;
+  display: inline-block;
+  margin: 0 auto;
+}
+
+/* Hide raw mermaid source briefly while async rendering, to avoid flashing code text. */
+.preview-html pre.mermaid:not([data-processed="true"]) {
+  color: transparent;
+  user-select: none;
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *,

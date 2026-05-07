@@ -57,6 +57,40 @@ describe("renderMarkdown", () => {
     });
   });
 
+  describe("mermaid fenced blocks", () => {
+    it("renders mermaid fences as pre.mermaid with no code element", async () => {
+      const html = await renderMarkdown("```mermaid\nflowchart TD\nA-->B\n```");
+
+      expect(html).toContain('<pre class="mermaid');
+      expect(html).not.toContain('<code class="language-mermaid"');
+      expect(html).toContain("flowchart TD");
+    });
+
+    it("escapes HTML special characters in the source", async () => {
+      const html = await renderMarkdown(
+        '```mermaid\ngraph TD\nA["<script>"]-->B\n```'
+      );
+
+      expect(html).not.toContain("<script>");
+      expect(html).toContain("&lt;script&gt;");
+    });
+
+    it("emits data-line-start and data-line-end attributes on the mermaid pre element", async () => {
+      const html = await renderMarkdown("```mermaid\nflowchart TD\nA-->B\n```");
+
+      expect(html).toMatch(/data-line-start="\d+"/);
+      expect(html).toMatch(/data-line-end="\d+"/);
+    });
+
+    it("does not affect non-mermaid fenced code blocks", async () => {
+      const html = await renderMarkdown("```js\nconst x = 1;\n```");
+
+      expect(html).toContain("<pre>");
+      expect(html).toMatch(/<code class="[^"]*language-js/);
+      expect(html).not.toContain('class="mermaid"');
+    });
+  });
+
   describe("checkbox rendering", () => {
     it("renders unchecked checkboxes", async () => {
       const result = await renderMarkdown("- [ ] todo item");

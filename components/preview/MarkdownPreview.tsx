@@ -40,6 +40,46 @@ export function MarkdownPreview() {
     };
   }, [currentDocument?.body]);
 
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const nodes = Array.from(container.querySelectorAll<HTMLElement>("pre.mermaid"));
+    if (nodes.length === 0) return;
+
+    let cancelled = false;
+
+    (async () => {
+      nodes.forEach((node) => {
+        if (!node.dataset.source) {
+          node.dataset.source = node.textContent ?? "";
+        } else {
+          node.removeAttribute("data-processed");
+          node.innerHTML = node.dataset.source;
+        }
+      });
+
+      try {
+        const mermaidModule = await import("mermaid");
+        if (cancelled) return;
+
+        const mermaid = mermaidModule.default;
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: enableNightMode ? "dark" : "default",
+          securityLevel: "strict",
+        });
+        await mermaid.run({ nodes });
+      } catch {
+        // Mermaid renders its own error state in the diagram block.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sanitizedHtml, enableNightMode]);
+
   // Scroll sync with editor
   useEffect(() => {
     if (!enableScrollSync || !containerRef.current) return;

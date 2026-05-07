@@ -125,6 +125,23 @@ async function getMarkdownRenderer(): Promise<MarkdownIt> {
 
   applyLegacyRendererRules(md);
 
+  const wrappedFence = md.renderer.rules.fence!;
+  const escapeHtml = md.utils.escapeHtml;
+  md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+    const token = tokens[idx];
+    const info = (token.info || "").trim();
+
+    if (info === "mermaid") {
+      const start = token.map ? token.map[0] + 1 : 0;
+      const end = token.map ? token.map[1] : 0;
+      const escaped = escapeHtml(token.content);
+
+      return `<pre class="mermaid code-line has-line-data" data-line-start="${start}" data-line-end="${end}">${escaped}</pre>\n`;
+    }
+
+    return wrappedFence(tokens, idx, options, env, self);
+  };
+
   return md;
 }
 

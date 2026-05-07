@@ -44,6 +44,7 @@
     "markdown-it-sup": "^2.0.0",
     "markdown-it-texmath": "^1.0.0",
     "markdown-it-toc": "^1.1.0",
+    "mermaid": "^11.14.0",
     "monaco-emacs": "^0.3.0",
     "monaco-vim": "^0.4.4",
     "next": "14.2.35",
