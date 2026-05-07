@@ -16,6 +16,9 @@ function resetStore() {
       settings: { ...initialState.settings },
       sidebarOpen: true,
       settingsOpen: false,
+      shortcutsOpen: false,
+      panelLayout: "split",
+      splitRatio: 0.5,
       previewVisible: true,
       zenMode: false,
       editorScrollPercent: 0,
@@ -276,6 +279,96 @@ describe("useStore", () => {
     });
   });
 
+  describe("panel layout", () => {
+    it("uses default split layout values", () => {
+      const state = useStore.getState();
+
+      expect(state.panelLayout).toBe("split");
+      expect(state.splitRatio).toBe(0.5);
+    });
+
+    it("clamps split ratio updates", () => {
+      useStore.getState().setSplitRatio(0.05);
+      expect(useStore.getState().splitRatio).toBe(0.15);
+
+      useStore.getState().setSplitRatio(0.99);
+      expect(useStore.getState().splitRatio).toBe(0.85);
+
+      useStore.getState().setSplitRatio(0.4);
+      expect(useStore.getState().splitRatio).toBe(0.4);
+    });
+
+    it("keeps previewVisible false when setting editor-only layout", () => {
+      useStore.getState().setPanelLayout("editor-only");
+
+      const state = useStore.getState();
+
+      expect(state.panelLayout).toBe("editor-only");
+      expect(state.previewVisible).toBe(false);
+    });
+
+    it("keeps previewVisible true when setting split layout", () => {
+      useStore.getState().setPanelLayout("editor-only");
+      useStore.getState().setPanelLayout("split");
+
+      const state = useStore.getState();
+
+      expect(state.panelLayout).toBe("split");
+      expect(state.previewVisible).toBe(true);
+    });
+
+    it("cycles layouts from split to editor-only to preview-only to split", () => {
+      useStore.getState().cyclePanelLayout();
+      expect(useStore.getState().panelLayout).toBe("editor-only");
+
+      useStore.getState().cyclePanelLayout();
+      expect(useStore.getState().panelLayout).toBe("preview-only");
+
+      useStore.getState().cyclePanelLayout();
+      expect(useStore.getState().panelLayout).toBe("split");
+    });
+
+    it("maps legacy togglePreview between split and editor-only layouts", () => {
+      useStore.getState().togglePreview();
+
+      expect(useStore.getState().panelLayout).toBe("editor-only");
+      expect(useStore.getState().previewVisible).toBe(false);
+
+      useStore.getState().togglePreview();
+
+      expect(useStore.getState().panelLayout).toBe("split");
+      expect(useStore.getState().previewVisible).toBe(true);
+    });
+
+    it("migrates legacy previewVisible false during hydration", () => {
+      localStorage.setItem("profileV3", JSON.stringify({ previewVisible: false }));
+
+      useStore.getState().hydrate();
+
+      const state = useStore.getState();
+
+      expect(state.panelLayout).toBe("editor-only");
+      expect(state.splitRatio).toBe(0.5);
+      expect(state.previewVisible).toBe(false);
+    });
+
+    it("clamps persisted splitRatio during hydration", () => {
+      localStorage.setItem("profileV3", JSON.stringify({ panelLayout: "split", splitRatio: 0.99 }));
+
+      useStore.getState().hydrate();
+
+      expect(useStore.getState().splitRatio).toBe(0.85);
+    });
+
+    it("falls back to split layout when persisted panelLayout is invalid", () => {
+      localStorage.setItem("profileV3", JSON.stringify({ panelLayout: "bogus" }));
+
+      useStore.getState().hydrate();
+
+      expect(useStore.getState().panelLayout).toBe("split");
+    });
+  });
+
   describe("setZenMode", () => {
     it("sets zenMode to true", () => {
       useStore.getState().setZenMode(true);
@@ -471,6 +564,8 @@ describe("useStore", () => {
       const doc = createTestDocument({ id: "persist-1", title: "Persisted.md" });
       seedStoreWithDocuments([doc]);
       useStore.getState().updateSettings({ tabSize: 8 });
+      useStore.getState().setPanelLayout("preview-only");
+      useStore.getState().setSplitRatio(0.4);
 
       useStore.getState().persist();
 
@@ -482,6 +577,9 @@ describe("useStore", () => {
       expect(storedFiles[0].id).toBe("persist-1");
       expect(storedCurrent.title).toBe("Persisted.md");
       expect(storedSettings.tabSize).toBe(8);
+      expect(storedSettings.panelLayout).toBe("preview-only");
+      expect(storedSettings.splitRatio).toBe(0.4);
+      expect(storedSettings.previewVisible).toBe(true);
     });
 
     it("stores null currentDocument when none is selected", () => {

@@ -1,14 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useStore } from "@/stores/store";
+import { useStore, type PanelLayout } from "@/stores/store";
 import { useToast } from "@/components/ui/Toast";
 import { useImageUpload } from "@/hooks/useImageUpload";
 import { importDocumentFile } from "@/lib/import";
+import { cn } from "@/lib/utils";
 import {
   Menu,
-  Eye,
-  EyeOff,
   Settings,
   Download,
   FileText,
@@ -18,9 +17,22 @@ import {
   Upload,
   ImagePlus,
   HelpCircle,
+  PanelLeft,
+  Columns2,
+  PanelRight,
 } from "lucide-react";
 
 type ExportFormat = "markdown" | "html" | "pdf";
+
+const LAYOUT_OPTIONS: Array<{
+  layout: PanelLayout;
+  label: string;
+  Icon: typeof PanelLeft;
+}> = [
+  { layout: "editor-only", label: "Focus editor", Icon: PanelLeft },
+  { layout: "split", label: "Show both panes", Icon: Columns2 },
+  { layout: "preview-only", label: "Focus preview", Icon: PanelRight },
+];
 
 function getDownloadFilename(response: Response, fallback: string): string {
   const contentDisposition = response.headers.get("Content-Disposition");
@@ -31,8 +43,8 @@ function getDownloadFilename(response: Response, fallback: string): string {
 export function Navbar() {
   const toggleSidebar = useStore((state) => state.toggleSidebar);
   const toggleSettings = useStore((state) => state.toggleSettings);
-  const togglePreview = useStore((state) => state.togglePreview);
-  const previewVisible = useStore((state) => state.previewVisible);
+  const panelLayout = useStore((state) => state.panelLayout);
+  const setPanelLayout = useStore((state) => state.setPanelLayout);
   const currentDocument = useStore((state) => state.currentDocument);
   const createImportedDocument = useStore((state) => state.createImportedDocument);
   const insertMarkdownAtCursor = useStore((state) => state.insertMarkdownAtCursor);
@@ -267,17 +279,30 @@ export function Navbar() {
           )}
         </div>
 
-        {/* Preview toggle */}
-        <button
-          onClick={togglePreview}
-          aria-label={previewVisible ? "Hide preview" : "Show preview"}
-          title={previewVisible ? "Hide preview" : "Show preview"}
-          aria-pressed={previewVisible}
-          className="text-text-invert hover:text-plum transition-all active:scale-[0.97] p-2 rounded
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-plum focus-visible:ring-offset-2 focus-visible:ring-offset-bg-navbar"
-        >
-          {previewVisible ? <Eye size={20} /> : <EyeOff size={20} />}
-        </button>
+        {/* Pane layout switcher */}
+        <div className="flex items-center overflow-hidden rounded border border-border-settings" aria-label="Pane layout">
+          {LAYOUT_OPTIONS.map(({ layout, label, Icon }) => {
+            const isActive = panelLayout === layout;
+
+            return (
+              <button
+                key={layout}
+                type="button"
+                onClick={() => setPanelLayout(layout)}
+                aria-label={label}
+                title={label}
+                aria-pressed={isActive}
+                className={cn(
+                  "p-2 transition-all active:scale-[0.97] hover:text-text-invert",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-plum focus-visible:ring-offset-2 focus-visible:ring-offset-bg-navbar",
+                  isActive ? "text-plum" : "text-text-muted hover:text-text-invert"
+                )}
+              >
+                <Icon size={18} />
+              </button>
+            );
+          })}
+        </div>
 
         {/* Zen mode */}
         <button

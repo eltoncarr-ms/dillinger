@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback, memo } from "react";
+import { useEffect, useRef, useState, useCallback, memo } from "react";
 import dynamic from "next/dynamic";
-import { X, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, X, Upload } from "lucide-react";
 import { Navbar } from "@/components/navbar/Navbar";
 import { LogoBar } from "@/components/ads/LogoBar";
 import { DocumentTitle } from "@/components/editor/DocumentTitle";
 import { MonacoEditor } from "@/components/editor/MonacoEditor";
+import { PaneResizer } from "@/components/editor/PaneResizer";
 import { MarkdownPreview } from "@/components/preview/MarkdownPreview";
 import { SettingsModal } from "@/components/modals/SettingsModal";
 import { KeyboardShortcuts } from "@/components/ui/KeyboardShortcuts";
@@ -15,6 +16,7 @@ import { useStore } from "@/stores/store";
 import { EditorSkeleton } from "@/components/ui/Skeleton";
 import { useImageUpload } from "@/hooks/useImageUpload";
 import { importDocumentFile } from "@/lib/import";
+import { cn } from "@/lib/utils";
 
 // Dynamic import Sidebar to prevent SSR issues with GitHub/Dropbox hooks
 const Sidebar = dynamic(
@@ -52,7 +54,12 @@ const DropZoneOverlay = memo(function DropZoneOverlay({
 });
 
 function EditorContent() {
-  const previewVisible = useStore((state) => state.previewVisible);
+  const panelLayout = useStore((state) => state.panelLayout);
+  const splitRatio = useStore((state) => state.splitRatio);
+  const setSplitRatio = useStore((state) => state.setSplitRatio);
+  const setPanelLayout = useStore((state) => state.setPanelLayout);
+  const cyclePanelLayout = useStore((state) => state.cyclePanelLayout);
+  const editorInstance = useStore((state) => state.editorInstance);
   const currentDocument = useStore((state) => state.currentDocument);
   const createImportedDocument = useStore((state) => state.createImportedDocument);
   const insertMarkdownAtCursor = useStore((state) => state.insertMarkdownAtCursor);
@@ -65,7 +72,9 @@ function EditorContent() {
   const { upload } = useImageUpload();
 
   const [isDragging, setIsDragging] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
   const [, setDragCounter] = useState(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Handle file drop
   const handleDrop = useCallback(
@@ -130,13 +139,39 @@ function EditorContent() {
     e.stopPropagation();
   }, []);
 
-  // Keyboard shortcuts for zen mode
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") {
+      setIsDesktop(false);
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(min-width: 640px)");
+    const updateIsDesktop = () => setIsDesktop(mediaQuery.matches);
+
+    updateIsDesktop();
+    mediaQuery.addEventListener("change", updateIsDesktop);
+    return () => mediaQuery.removeEventListener("change", updateIsDesktop);
+  }, []);
+
+  useEffect(() => {
+    if (!editorInstance) return;
+
+    const id = requestAnimationFrame(() => editorInstance.layout());
+    return () => cancelAnimationFrame(id);
+  }, [editorInstance, panelLayout, splitRatio]);
+
+  // Keyboard shortcuts for zen mode and pane layout
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Cmd/Ctrl + Shift + Z for zen mode
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "z") {
         e.preventDefault();
         setZenMode(!zenMode);
+      }
+      // Cmd/Ctrl + \\ cycles pane layout (global, fires even inside inputs/Monaco)
+      if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
+        e.preventDefault();
+        cyclePanelLayout();
       }
       // Escape to exit zen mode
       if (e.key === "Escape" && zenMode) {
@@ -155,7 +190,7 @@ function EditorContent() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [zenMode, setZenMode, toggleShortcuts]);
+  }, [cyclePanelLayout, zenMode, setZenMode, toggleShortcuts]);
 
   useEffect(() => {
     if (!isDirty) return;
@@ -202,6 +237,11 @@ function EditorContent() {
     );
   }
 
+  const showEditor = panelLayout === "split" || panelLayout === "editor-only";
+  const showPreview = panelLayout === "preview-only" || (panelLayout === "split" && isDesktop);
+  const showResizer = panelLayout === "split" && isDesktop;
+  const editorStyle = showResizer ? { width: `${splitRatio * 100}%` } : undefined;
+
   return (
     <div
       className="h-dvh flex overflow-hidden relative animate-fade-in"
@@ -221,19 +261,56 @@ function EditorContent() {
         <DocumentTitle />
 
         {/* Editor + Preview */}
-        <div className="flex-1 flex min-h-0">
+        <div ref={containerRef} className="flex-1 flex min-h-0">
           {/* Editor Panel */}
-          <div
-            className={`${
-              previewVisible ? "w-full sm:w-1/2 shadow-none sm:shadow-[1px_0_0_0_#E8E8E8]" : "w-full"
-            } border-r border-border-light`}
-          >
-            <MonacoEditor />
-          </div>
+          {showEditor && (
+            <div
+              className={cn(
+                "relative min-w-0 w-full",
+                showResizer && "sm:basis-auto sm:flex-shrink-0"
+              )}
+              style={editorStyle}
+            >
+              {panelLayout === "split" && (
+                <button
+                  type="button"
+                  aria-label="Collapse editor pane"
+                  title="Collapse editor pane"
+                  onClick={() => setPanelLayout("preview-only")}
+                  className="absolute top-2 right-2 z-overlay text-text-muted hover:text-text-invert transition-colors rounded
+                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-plum"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              )}
+              <MonacoEditor />
+            </div>
+          )}
+
+          {showResizer && (
+            <PaneResizer
+              ratio={splitRatio}
+              onRatioChange={setSplitRatio}
+              onCollapsePreview={() => setPanelLayout("editor-only")}
+              containerRef={containerRef}
+            />
+          )}
 
           {/* Preview Panel */}
-          {previewVisible && (
-            <div className="hidden sm:block w-1/2 bg-[#FAFBFC]">
+          {showPreview && (
+            <div className="relative min-w-0 w-full flex-1 bg-[#FAFBFC]">
+              {panelLayout === "split" && (
+                <button
+                  type="button"
+                  aria-label="Collapse preview pane"
+                  title="Collapse preview pane"
+                  onClick={() => setPanelLayout("editor-only")}
+                  className="absolute top-2 right-2 z-overlay text-text-muted hover:text-text-invert transition-colors rounded
+                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-plum"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+              )}
               <MarkdownPreview />
             </div>
           )}

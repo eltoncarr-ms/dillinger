@@ -37,6 +37,8 @@ function resetStore() {
       settings: { ...initialState.settings },
       sidebarOpen: false,
       settingsOpen: false,
+      panelLayout: "split",
+      splitRatio: 0.5,
       previewVisible: true,
       zenMode: false,
       editorScrollPercent: 0,
@@ -59,7 +61,7 @@ describe("Navbar", () => {
     expect(screen.getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
     expect(screen.getByText("DILLINGER")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export document" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /preview/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show both panes" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open settings" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Enter zen mode" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import file" })).toBeInTheDocument();
@@ -76,18 +78,12 @@ describe("Navbar", () => {
     expect(useStore.getState().sidebarOpen).toBe(true);
   });
 
-  it("toggles preview visibility and reflects state in aria-pressed", async () => {
-    const user = userEvent.setup();
+  it("marks the split layout button as active by default", () => {
     render(<Navbar />);
 
-    const previewButton = screen.getByRole("button", { name: "Hide preview" });
-    expect(previewButton).toHaveAttribute("aria-pressed", "true");
-
-    await user.click(previewButton);
-
-    expect(useStore.getState().previewVisible).toBe(false);
-    const updatedButton = screen.getByRole("button", { name: "Show preview" });
-    expect(updatedButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Focus editor" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Show both panes" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Focus preview" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("calls toggleSettings when settings button is clicked", async () => {
@@ -205,6 +201,57 @@ describe("Navbar", () => {
     expect(input).toBeInTheDocument();
     expect(input).toHaveAttribute("type", "file");
     expect(input).toHaveAttribute("accept", "image/*");
+  });
+
+  describe("panel layout switcher", () => {
+    it("renders three layout buttons with correct labels", () => {
+      render(<Navbar />);
+
+      expect(screen.getByRole("button", { name: "Focus editor" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Show both panes" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Focus preview" })).toBeInTheDocument();
+    });
+
+    it("reflects the current panel layout in aria-pressed", () => {
+      useStore.setState({ panelLayout: "preview-only", previewVisible: true }, false);
+
+      render(<Navbar />);
+
+      expect(screen.getByRole("button", { name: "Focus editor" })).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByRole("button", { name: "Show both panes" })).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByRole("button", { name: "Focus preview" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("sets editor-only layout when Focus editor is clicked", async () => {
+      const user = userEvent.setup();
+      render(<Navbar />);
+
+      await user.click(screen.getByRole("button", { name: "Focus editor" }));
+
+      expect(useStore.getState().panelLayout).toBe("editor-only");
+      expect(useStore.getState().previewVisible).toBe(false);
+    });
+
+    it("returns to split layout when Show both panes is clicked", async () => {
+      const user = userEvent.setup();
+      useStore.setState({ panelLayout: "editor-only", previewVisible: false }, false);
+      render(<Navbar />);
+
+      await user.click(screen.getByRole("button", { name: "Show both panes" }));
+
+      expect(useStore.getState().panelLayout).toBe("split");
+      expect(useStore.getState().previewVisible).toBe(true);
+    });
+
+    it("sets preview-only layout when Focus preview is clicked", async () => {
+      const user = userEvent.setup();
+      render(<Navbar />);
+
+      await user.click(screen.getByRole("button", { name: "Focus preview" }));
+
+      expect(useStore.getState().panelLayout).toBe("preview-only");
+      expect(useStore.getState().previewVisible).toBe(true);
+    });
   });
 
   describe("handleExport", () => {

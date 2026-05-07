@@ -245,15 +245,15 @@ test.describe("Preview toggle", () => {
     await expect(page.locator("#preview")).toBeVisible();
     await expect(page.locator("#preview h1")).toHaveText("Hello World", { timeout: 10_000 });
 
-    // Hide preview
-    await page.getByRole("button", { name: "Hide preview" }).click();
+    // Focus editor (collapses preview)
+    await page.getByRole("button", { name: "Focus editor" }).click();
     await expect(page.locator("#preview")).toHaveCount(0);
     await expect(
-      page.getByRole("button", { name: "Show preview" })
+      page.getByRole("button", { name: "Show both panes" })
     ).toBeVisible();
 
-    // Show preview again
-    await page.getByRole("button", { name: "Show preview" }).click();
+    // Show both panes again
+    await page.getByRole("button", { name: "Show both panes" }).click();
     await expect(page.locator("#preview")).toBeVisible();
     await expect(page.locator("#preview h1")).toHaveText("Hello World", { timeout: 10_000 });
   });

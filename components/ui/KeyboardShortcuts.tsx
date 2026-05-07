@@ -25,6 +25,7 @@ const SHORTCUT_GROUPS = [
     title: "View",
     shortcuts: [
       { keys: ["⌘", "⇧", "Z"], action: "Toggle zen mode" },
+      { keys: ["Ctrl/⌘", "\\"], action: "Cycle pane layout (split / editor only / preview only)" },
       { keys: ["Escape"], action: "Exit zen mode" },
     ],
   },

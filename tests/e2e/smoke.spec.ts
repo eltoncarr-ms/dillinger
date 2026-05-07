@@ -38,9 +38,9 @@ test("loads the editor shell and core controls", async ({ page }) => {
   await expect(page.getByTestId("word-count")).toContainText("11 words");
   await expect(page.getByTestId("character-count")).toContainText("74 characters");
 
-  await page.getByRole("button", { name: "Hide preview" }).click();
+  await page.getByRole("button", { name: "Focus editor" }).click();
   await expect(page.locator("#preview")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Show preview" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show both panes" })).toBeVisible();
 
   await page.getByRole("button", { name: "Open settings" }).click();
   await expect(page.getByRole("dialog", { name: "Settings" })).toBeVisible();

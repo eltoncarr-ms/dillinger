@@ -3,6 +3,66 @@ import type * as Monaco from "monaco-editor";
 import { Document, UserSettings, DEFAULT_SETTINGS, DEFAULT_DOCUMENT_BODY } from "@/lib/types";
 import { DEFAULT_DOCUMENT_TITLE } from "@/lib/document";
 
+export type PanelLayout = "split" | "editor-only" | "preview-only";
+
+const MIN_SPLIT_RATIO = 0.15;
+const MAX_SPLIT_RATIO = 0.85;
+const DEFAULT_SPLIT_RATIO = 0.5;
+const PANEL_LAYOUTS: readonly PanelLayout[] = ["split", "editor-only", "preview-only"];
+
+const isPanelLayout = (value: unknown): value is PanelLayout =>
+  typeof value === "string" && PANEL_LAYOUTS.includes(value as PanelLayout);
+
+const clampSplitRatio = (ratio: unknown): number => {
+  if (typeof ratio !== "number" || !Number.isFinite(ratio)) {
+    return DEFAULT_SPLIT_RATIO;
+  }
+
+  return Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, ratio));
+};
+
+const previewVisibleForLayout = (layout: PanelLayout): boolean => layout !== "editor-only";
+
+const parseStorageRecord = (json: string | null): Record<string, unknown> | null => {
+  if (!json) return null;
+
+  const parsed = JSON.parse(json) as unknown;
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : null;
+};
+
+const settingsFromProfile = (profile: Record<string, unknown> | null): UserSettings => {
+  if (!profile) return DEFAULT_SETTINGS;
+
+  return {
+    enableAutoSave: typeof profile.enableAutoSave === "boolean"
+      ? profile.enableAutoSave
+      : DEFAULT_SETTINGS.enableAutoSave,
+    enableWordsCount: typeof profile.enableWordsCount === "boolean"
+      ? profile.enableWordsCount
+      : DEFAULT_SETTINGS.enableWordsCount,
+    enableCharactersCount: typeof profile.enableCharactersCount === "boolean"
+      ? profile.enableCharactersCount
+      : DEFAULT_SETTINGS.enableCharactersCount,
+    enableScrollSync: typeof profile.enableScrollSync === "boolean"
+      ? profile.enableScrollSync
+      : DEFAULT_SETTINGS.enableScrollSync,
+    tabSize: typeof profile.tabSize === "number" && Number.isFinite(profile.tabSize)
+      ? profile.tabSize
+      : DEFAULT_SETTINGS.tabSize,
+    keybindings: profile.keybindings === "default" || profile.keybindings === "vim" || profile.keybindings === "emacs"
+      ? profile.keybindings
+      : DEFAULT_SETTINGS.keybindings,
+    enableNightMode: typeof profile.enableNightMode === "boolean"
+      ? profile.enableNightMode
+      : DEFAULT_SETTINGS.enableNightMode,
+    enableGitHubComment: typeof profile.enableGitHubComment === "boolean"
+      ? profile.enableGitHubComment
+      : DEFAULT_SETTINGS.enableGitHubComment,
+  };
+};
+
 interface AppState {
   // Documents
   documents: Document[];
@@ -16,6 +76,8 @@ interface AppState {
   sidebarOpen: boolean;
   settingsOpen: boolean;
   shortcutsOpen: boolean;
+  panelLayout: PanelLayout;
+  splitRatio: number;
   previewVisible: boolean;
   zenMode: boolean;
   isDirty: boolean;
@@ -39,6 +101,9 @@ interface AppState {
   toggleSidebar: () => void;
   toggleSettings: () => void;
   toggleShortcuts: () => void;
+  setPanelLayout: (layout: PanelLayout) => void;
+  setSplitRatio: (ratio: number) => void;
+  cyclePanelLayout: () => void;
   togglePreview: () => void;
   setZenMode: (enabled: boolean) => void;
   setEditorScrollPercent: (percent: number) => void;
@@ -65,6 +130,8 @@ export const useStore = create<AppState>((set, get) => ({
   sidebarOpen: false,
   settingsOpen: false,
   shortcutsOpen: false,
+  panelLayout: "split",
+  splitRatio: DEFAULT_SPLIT_RATIO,
   previewVisible: true,
   zenMode: false,
   isDirty: false,
@@ -184,7 +251,27 @@ export const useStore = create<AppState>((set, get) => ({
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   toggleSettings: () => set((state) => ({ settingsOpen: !state.settingsOpen })),
   toggleShortcuts: () => set((state) => ({ shortcutsOpen: !state.shortcutsOpen })),
-  togglePreview: () => set((state) => ({ previewVisible: !state.previewVisible })),
+  setPanelLayout: (layout) => {
+    set({ panelLayout: layout, previewVisible: previewVisibleForLayout(layout) });
+    get().persist();
+  },
+  setSplitRatio: (ratio) => {
+    set({ splitRatio: clampSplitRatio(ratio) });
+    get().persist();
+  },
+  cyclePanelLayout: () => {
+    const { panelLayout } = get();
+    const nextLayout: PanelLayout = panelLayout === "split"
+      ? "editor-only"
+      : panelLayout === "editor-only"
+        ? "preview-only"
+        : "split";
+
+    get().setPanelLayout(nextLayout);
+  },
+  togglePreview: () => {
+    get().setPanelLayout(get().previewVisible ? "editor-only" : "split");
+  },
   setZenMode: (enabled) => set({ zenMode: enabled }),
   setEditorScrollPercent: (percent) => set({ editorScrollPercent: percent }),
   setEditorTopLine: (line) => set({ editorTopLine: line }),
@@ -197,13 +284,24 @@ export const useStore = create<AppState>((set, get) => ({
       const filesJson = localStorage.getItem("files");
       const currentJson = localStorage.getItem("currentDocument");
       const settingsJson = localStorage.getItem("profileV3");
+      const storedProfile = parseStorageRecord(settingsJson);
 
       const isFirstVisit = !filesJson;
-      let documents: Document[] = filesJson ? JSON.parse(filesJson) : [];
-      let currentDocument: Document | null = currentJson ? JSON.parse(currentJson) : null;
-      const settings: UserSettings = settingsJson
-        ? { ...DEFAULT_SETTINGS, ...JSON.parse(settingsJson) }
-        : DEFAULT_SETTINGS;
+      let documents: Document[] = filesJson ? JSON.parse(filesJson) as Document[] : [];
+      let currentDocument: Document | null = currentJson
+        ? JSON.parse(currentJson) as Document | null
+        : null;
+      const settings = settingsFromProfile(storedProfile);
+      const panelLayout: PanelLayout = storedProfile && isPanelLayout(storedProfile.panelLayout)
+        ? storedProfile.panelLayout
+        : storedProfile && "panelLayout" in storedProfile
+          ? "split"
+          : storedProfile?.previewVisible === false
+            ? "editor-only"
+            : "split";
+      const splitRatio = storedProfile && "splitRatio" in storedProfile
+        ? clampSplitRatio(storedProfile.splitRatio)
+        : DEFAULT_SPLIT_RATIO;
 
       // Ensure at least one document exists
       if (documents.length === 0) {
@@ -217,7 +315,16 @@ export const useStore = create<AppState>((set, get) => ({
         currentDocument = documents[0];
       }
 
-      set({ documents, currentDocument, settings, isDirty: false, sidebarOpen: isFirstVisit });
+      set({
+        documents,
+        currentDocument,
+        settings,
+        panelLayout,
+        splitRatio,
+        previewVisible: previewVisibleForLayout(panelLayout),
+        isDirty: false,
+        sidebarOpen: isFirstVisit,
+      });
     } catch (e) {
       console.error("Failed to hydrate state:", e);
     }
@@ -226,12 +333,17 @@ export const useStore = create<AppState>((set, get) => ({
   persist: () => {
     if (typeof window === "undefined") return;
 
-    const { documents, currentDocument, settings } = get();
+    const { documents, currentDocument, settings, panelLayout, splitRatio, previewVisible } = get();
 
     try {
       localStorage.setItem("files", JSON.stringify(documents));
       localStorage.setItem("currentDocument", JSON.stringify(currentDocument));
-      localStorage.setItem("profileV3", JSON.stringify(settings));
+      localStorage.setItem("profileV3", JSON.stringify({
+        ...settings,
+        panelLayout,
+        splitRatio,
+        previewVisible,
+      }));
       set({ isDirty: false });
     } catch (e) {
       console.error("Failed to persist state:", e);
