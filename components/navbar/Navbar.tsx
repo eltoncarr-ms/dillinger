@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useStore, type PanelLayout } from "@/stores/store";
+import { useStore, type PanelLayout, type ReloadResult } from "@/stores/store";
 import { useToast } from "@/components/ui/Toast";
 import { useImageUpload } from "@/hooks/useImageUpload";
+import { ReloadConfirmModal } from "@/components/modals/ReloadConfirmModal";
+import { isFileSystemAccessSupported, pickMarkdownFile } from "@/lib/fileSystemAccess";
+import { newHandleId, saveHandle } from "@/lib/fileHandles";
 import { importDocumentFile } from "@/lib/import";
 import { cn } from "@/lib/utils";
 import {
@@ -15,6 +18,7 @@ import {
   FileType,
   Maximize2,
   Upload,
+  RefreshCw,
   ImagePlus,
   HelpCircle,
   PanelLeft,
@@ -47,6 +51,7 @@ export function Navbar() {
   const setPanelLayout = useStore((state) => state.setPanelLayout);
   const currentDocument = useStore((state) => state.currentDocument);
   const createImportedDocument = useStore((state) => state.createImportedDocument);
+  const reloadCurrentDocumentFromSource = useStore((state) => state.reloadCurrentDocumentFromSource);
   const insertMarkdownAtCursor = useStore((state) => state.insertMarkdownAtCursor);
   const setZenMode = useStore((state) => state.setZenMode);
   const toggleShortcuts = useStore((state) => state.toggleShortcuts);
@@ -54,9 +59,11 @@ export function Navbar() {
   const { upload } = useImageUpload();
 
   const [exportOpen, setExportOpen] = useState(false);
+  const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const supportsFileSystemAccess = isFileSystemAccessSupported();
 
   // Close dropdown on Escape key or click outside
   useEffect(() => {
@@ -131,6 +138,31 @@ export function Navbar() {
     }
   }, [currentDocument, notify]);
 
+  const handleImportClick = useCallback(async () => {
+    if (!isFileSystemAccessSupported()) {
+      importInputRef.current?.click();
+      return;
+    }
+
+    try {
+      const picked = await pickMarkdownFile();
+
+      if (!picked) {
+        return;
+      }
+
+      const handleId = newHandleId();
+      await saveHandle(handleId, picked.handle);
+      createImportedDocument(picked.filename, picked.content, {
+        handleId,
+        filename: picked.filename,
+      });
+      notify(`Imported "${picked.filename}" — Reload available`);
+    } catch (error) {
+      notify(error instanceof Error && error.message ? error.message : "Failed to import");
+    }
+  }, [createImportedDocument, notify]);
+
   const handleImportSelection = useCallback(async (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -153,6 +185,42 @@ export function Navbar() {
       );
     }
   }, [createImportedDocument, notify]);
+
+  const handleReloadResult = useCallback((result: ReloadResult) => {
+    switch (result.status) {
+      case "reloaded":
+        notify(`Reloaded from "${result.filename}"`);
+        break;
+      case "needs-confirm":
+        setReloadConfirmOpen(true);
+        break;
+      case "denied":
+        notify("Permission denied — could not reload");
+        break;
+      case "missing":
+        notify("Source file not found — Reload disabled");
+        break;
+      case "unsupported":
+        notify("Reload not supported in this browser");
+        break;
+      case "error":
+        notify(`Reload failed: ${result.message}`);
+        break;
+      case "no-source":
+        break;
+    }
+  }, [notify]);
+
+  const handleReloadClick = useCallback(async () => {
+    const result = await reloadCurrentDocumentFromSource();
+    handleReloadResult(result);
+  }, [handleReloadResult, reloadCurrentDocumentFromSource]);
+
+  const handleReloadConfirm = useCallback(async () => {
+    setReloadConfirmOpen(false);
+    const result = await reloadCurrentDocumentFromSource({ force: true });
+    handleReloadResult(result);
+  }, [handleReloadResult, reloadCurrentDocumentFromSource]);
 
   const handleImageSelection = useCallback(async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -192,7 +260,7 @@ export function Navbar() {
       {/* Right side */}
       <div className="flex items-center gap-2">
         <button
-          onClick={() => importInputRef.current?.click()}
+          onClick={handleImportClick}
           aria-label="Import file"
           title="Import file"
           className="text-text-invert hover:text-plum transition-all active:scale-[0.97] px-3 py-2
@@ -202,6 +270,24 @@ export function Navbar() {
           <Upload size={18} />
           <span className="hidden sm:inline">Import</span>
         </button>
+
+        {currentDocument?.localFile && (
+          <button
+            onClick={handleReloadClick}
+            disabled={!supportsFileSystemAccess}
+            aria-label="Reload from source"
+            title={supportsFileSystemAccess ? "Reload from source" : "Reload requires Chrome, Edge, or Opera"}
+            className={cn(
+              "text-text-invert hover:text-plum transition-all active:scale-[0.97] px-3 py-2",
+              "flex items-center gap-1 text-sm rounded",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-plum focus-visible:ring-offset-2 focus-visible:ring-offset-bg-navbar",
+              !supportsFileSystemAccess && "cursor-not-allowed opacity-50 hover:text-text-invert active:scale-100"
+            )}
+          >
+            <RefreshCw size={18} />
+            <span className="hidden sm:inline">Reload</span>
+          </button>
+        )}
 
         <button
           onClick={() => imageInputRef.current?.click()}
@@ -336,6 +422,13 @@ export function Navbar() {
           <HelpCircle size={20} />
         </button>
       </div>
+
+      <ReloadConfirmModal
+        isOpen={reloadConfirmOpen}
+        filename={currentDocument?.localFile?.filename ?? ""}
+        onCancel={() => setReloadConfirmOpen(false)}
+        onConfirm={handleReloadConfirm}
+      />
 
       <input
         ref={importInputRef}

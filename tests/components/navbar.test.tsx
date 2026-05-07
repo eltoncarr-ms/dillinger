@@ -20,6 +20,40 @@ vi.mock("@/lib/import", () => ({
   importDocumentFile: (...args: unknown[]) => mockImportDocumentFile(...args),
 }));
 
+const mockIsFileSystemAccessSupported = vi.fn();
+const mockPickMarkdownFile = vi.fn();
+vi.mock("@/lib/fileSystemAccess", () => ({
+  isFileSystemAccessSupported: () => mockIsFileSystemAccessSupported(),
+  pickMarkdownFile: (...args: unknown[]) => mockPickMarkdownFile(...args),
+}));
+
+const mockSaveHandle = vi.fn();
+const mockNewHandleId = vi.fn();
+vi.mock("@/lib/fileHandles", () => ({
+  saveHandle: (...args: unknown[]) => mockSaveHandle(...args),
+  newHandleId: () => mockNewHandleId(),
+}));
+
+vi.mock("@/components/modals/ReloadConfirmModal", () => ({
+  ReloadConfirmModal: ({
+    isOpen,
+    filename,
+    onCancel,
+    onConfirm,
+  }: {
+    isOpen: boolean;
+    filename: string;
+    onCancel: () => void;
+    onConfirm: () => void | Promise<void>;
+  }) => isOpen ? (
+    <div role="dialog" aria-label="Reload confirmation">
+      <p>Reload {filename}</p>
+      <button type="button" onClick={onCancel}>Cancel</button>
+      <button type="button" onClick={onConfirm}>Reload anyway</button>
+    </div>
+  ) : null,
+}));
+
 const initialState = useStore.getState();
 
 function resetStore() {
@@ -48,11 +82,27 @@ function resetStore() {
   );
 }
 
+function setCurrentDocumentSource() {
+  const currentDocument = useStore.getState().currentDocument;
+
+  useStore.setState({
+    currentDocument: currentDocument
+      ? {
+          ...currentDocument,
+          localFile: { handleId: "handle-1", filename: "source.md" },
+        }
+      : null,
+  }, false);
+}
+
 describe("Navbar", () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    mockIsFileSystemAccessSupported.mockReturnValue(false);
+    mockNewHandleId.mockReturnValue("handle-1");
+    mockSaveHandle.mockResolvedValue(undefined);
   });
 
   it("renders menu icon, logo, and action buttons", () => {
@@ -192,6 +242,105 @@ describe("Navbar", () => {
     await user.click(screen.getByRole("button", { name: "Insert image" }));
 
     expect(clickSpy).toHaveBeenCalled();
+  });
+
+  it("hides the reload button when the current document has no local source", () => {
+    render(<Navbar />);
+
+    expect(screen.queryByRole("button", { name: "Reload from source" })).not.toBeInTheDocument();
+  });
+
+  it("renders the reload button when the current document has a local source", () => {
+    mockIsFileSystemAccessSupported.mockReturnValue(true);
+    setCurrentDocumentSource();
+
+    render(<Navbar />);
+
+    expect(screen.getByRole("button", { name: "Reload from source" })).toBeInTheDocument();
+  });
+
+  it("disables the reload button when File System Access is unsupported", () => {
+    setCurrentDocumentSource();
+
+    render(<Navbar />);
+
+    const reloadButton = screen.getByRole("button", { name: "Reload from source" });
+    expect(reloadButton).toBeDisabled();
+    expect(reloadButton).toHaveAttribute("title", "Reload requires Chrome, Edge, or Opera");
+  });
+
+  it("reloads from source and shows a success toast", async () => {
+    const user = userEvent.setup();
+    const reloadCurrentDocumentFromSource = vi.fn().mockResolvedValue({
+      status: "reloaded",
+      filename: "source.md",
+    });
+    mockIsFileSystemAccessSupported.mockReturnValue(true);
+    setCurrentDocumentSource();
+    useStore.setState({ reloadCurrentDocumentFromSource }, false);
+
+    render(<Navbar />);
+
+    await user.click(screen.getByRole("button", { name: "Reload from source" }));
+
+    await waitFor(() => {
+      expect(reloadCurrentDocumentFromSource).toHaveBeenCalledWith();
+    });
+    expect(mockNotify).toHaveBeenCalledWith('Reloaded from "source.md"');
+  });
+
+  it("opens confirm modal for dirty reload and force reloads on confirm", async () => {
+    const user = userEvent.setup();
+    const reloadCurrentDocumentFromSource = vi.fn()
+      .mockResolvedValueOnce({ status: "needs-confirm" })
+      .mockResolvedValueOnce({ status: "reloaded", filename: "source.md" });
+    mockIsFileSystemAccessSupported.mockReturnValue(true);
+    setCurrentDocumentSource();
+    useStore.setState({ reloadCurrentDocumentFromSource }, false);
+
+    render(<Navbar />);
+
+    await user.click(screen.getByRole("button", { name: "Reload from source" }));
+    expect(await screen.findByRole("dialog", { name: "Reload confirmation" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reload anyway" }));
+
+    await waitFor(() => {
+      expect(reloadCurrentDocumentFromSource).toHaveBeenLastCalledWith({ force: true });
+    });
+    expect(mockNotify).toHaveBeenCalledWith('Reloaded from "source.md"');
+  });
+
+  it("shows a permission denied toast when reload is denied", async () => {
+    const user = userEvent.setup();
+    const reloadCurrentDocumentFromSource = vi.fn().mockResolvedValue({ status: "denied" });
+    mockIsFileSystemAccessSupported.mockReturnValue(true);
+    setCurrentDocumentSource();
+    useStore.setState({ reloadCurrentDocumentFromSource }, false);
+
+    render(<Navbar />);
+
+    await user.click(screen.getByRole("button", { name: "Reload from source" }));
+
+    await waitFor(() => {
+      expect(mockNotify).toHaveBeenCalledWith("Permission denied — could not reload");
+    });
+  });
+
+  it("shows a missing source toast when reload source is gone", async () => {
+    const user = userEvent.setup();
+    const reloadCurrentDocumentFromSource = vi.fn().mockResolvedValue({ status: "missing" });
+    mockIsFileSystemAccessSupported.mockReturnValue(true);
+    setCurrentDocumentSource();
+    useStore.setState({ reloadCurrentDocumentFromSource }, false);
+
+    render(<Navbar />);
+
+    await user.click(screen.getByRole("button", { name: "Reload from source" }));
+
+    await waitFor(() => {
+      expect(mockNotify).toHaveBeenCalledWith("Source file not found — Reload disabled");
+    });
   });
 
   it("renders a hidden file input for image import", () => {
@@ -459,6 +608,65 @@ describe("Navbar", () => {
   });
 
   describe("handleImportSelection", () => {
+    it("imports with File System Access and stores the handle source", async () => {
+      const user = userEvent.setup();
+      const handle = { kind: "file", name: "picked.md" };
+      const createImportedDocument = vi.fn();
+      mockIsFileSystemAccessSupported.mockReturnValue(true);
+      mockPickMarkdownFile.mockResolvedValue({
+        handle,
+        filename: "picked.md",
+        content: "# Picked",
+      });
+      useStore.setState({ createImportedDocument }, false);
+
+      render(<Navbar />);
+
+      await user.click(screen.getByRole("button", { name: "Import file" }));
+
+      await waitFor(() => {
+        expect(mockPickMarkdownFile).toHaveBeenCalled();
+      });
+      expect(mockSaveHandle).toHaveBeenCalledWith("handle-1", handle);
+      expect(createImportedDocument).toHaveBeenCalledWith("picked.md", "# Picked", {
+        handleId: "handle-1",
+        filename: "picked.md",
+      });
+      expect(mockNotify).toHaveBeenCalledWith('Imported "picked.md" — Reload available');
+    });
+
+    it("falls back to the hidden input when File System Access is unsupported", async () => {
+      const user = userEvent.setup();
+      render(<Navbar />);
+
+      const fileInput = screen.getByTestId("document-import-input");
+      const clickSpy = vi.spyOn(fileInput, "click");
+
+      await user.click(screen.getByRole("button", { name: "Import file" }));
+
+      expect(clickSpy).toHaveBeenCalled();
+      expect(mockPickMarkdownFile).not.toHaveBeenCalled();
+    });
+
+    it("does not create a document or toast when File System Access picking is canceled", async () => {
+      const user = userEvent.setup();
+      const createImportedDocument = vi.fn();
+      mockIsFileSystemAccessSupported.mockReturnValue(true);
+      mockPickMarkdownFile.mockResolvedValue(null);
+      useStore.setState({ createImportedDocument }, false);
+
+      render(<Navbar />);
+
+      await user.click(screen.getByRole("button", { name: "Import file" }));
+
+      await waitFor(() => {
+        expect(mockPickMarkdownFile).toHaveBeenCalled();
+      });
+      expect(mockSaveHandle).not.toHaveBeenCalled();
+      expect(createImportedDocument).not.toHaveBeenCalled();
+      expect(mockNotify).not.toHaveBeenCalled();
+    });
+
     it("imports a markdown file and creates a document", async () => {
       mockImportDocumentFile.mockResolvedValue({
         body: "# Imported Content",

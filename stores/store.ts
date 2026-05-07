@@ -1,9 +1,21 @@
 import { create } from "zustand";
 import type * as Monaco from "monaco-editor";
-import { Document, UserSettings, DEFAULT_SETTINGS, DEFAULT_DOCUMENT_BODY } from "@/lib/types";
+import { DEFAULT_SETTINGS, DEFAULT_DOCUMENT_BODY } from "@/lib/types";
+import type { Document, LocalFileSource, UserSettings } from "@/lib/types";
 import { DEFAULT_DOCUMENT_TITLE } from "@/lib/document";
+import { getHandle, deleteHandle, listHandleIds } from "@/lib/fileHandles";
+import { isFileSystemAccessSupported, verifyPermission, readHandle } from "@/lib/fileSystemAccess";
 
 export type PanelLayout = "split" | "editor-only" | "preview-only";
+
+export type ReloadResult =
+  | { status: "reloaded"; filename: string }
+  | { status: "no-source" }
+  | { status: "unsupported" }
+  | { status: "missing" }
+  | { status: "denied" }
+  | { status: "needs-confirm" }
+  | { status: "error"; message: string };
 
 const MIN_SPLIT_RATIO = 0.15;
 const MAX_SPLIT_RATIO = 0.85;
@@ -63,6 +75,27 @@ const settingsFromProfile = (profile: Record<string, unknown> | null): UserSetti
   };
 };
 
+function isNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "NotFoundError"
+  );
+}
+
+async function pruneOrphanHandles(documents: Document[]): Promise<void> {
+  const referencedHandleIds = new Set(
+    documents
+      .map((document) => document.localFile?.handleId)
+      .filter((handleId): handleId is string => Boolean(handleId)),
+  );
+  const storedHandleIds = await listHandleIds();
+  const orphanHandleIds = storedHandleIds.filter((handleId) => !referencedHandleIds.has(handleId));
+
+  await Promise.all(orphanHandleIds.map((handleId) => deleteHandle(handleId)));
+}
+
 interface AppState {
   // Documents
   documents: Document[];
@@ -86,9 +119,11 @@ interface AppState {
 
   // Document Actions
   createDocument: () => void;
-  createImportedDocument: (title: string, body: string) => void;
+  createImportedDocument: (title: string, body: string, source?: LocalFileSource) => void;
   selectDocument: (id: string) => void;
   deleteDocument: (id: string) => void;
+  reloadCurrentDocumentFromSource: (options?: { force?: boolean }) => Promise<ReloadResult>;
+  clearLocalFileSource: (id: string) => void;
   updateDocumentBody: (body: string) => void;
   updateDocumentTitle: (title: string) => void;
   setEditorInstance: (editor: Monaco.editor.IStandaloneCodeEditor | null) => void;
@@ -148,11 +183,12 @@ export const useStore = create<AppState>((set, get) => ({
     get().persist();
   },
 
-  createImportedDocument: (title: string, body: string) => {
+  createImportedDocument: (title: string, body: string, source?: LocalFileSource) => {
     const newDoc = {
       ...createDefaultDocument(),
       title,
       body,
+      ...(source ? { localFile: source } : {}),
     };
 
     set((state) => ({
@@ -172,6 +208,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   deleteDocument: (id: string) => {
     const { documents, currentDocument } = get();
+    const handleId = documents.find((document) => document.id === id)?.localFile?.handleId;
     const filtered = documents.filter((d) => d.id !== id);
 
     let newCurrent = currentDocument;
@@ -180,6 +217,92 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     set({ documents: filtered, currentDocument: newCurrent });
+    get().persist();
+
+    if (handleId) {
+      void deleteHandle(handleId);
+    }
+  },
+
+  reloadCurrentDocumentFromSource: async (options) => {
+    const { currentDocument, isDirty } = get();
+    const localFile = currentDocument?.localFile;
+
+    if (!currentDocument || !localFile) {
+      return { status: "no-source" };
+    }
+
+    if (!isFileSystemAccessSupported()) {
+      return { status: "unsupported" };
+    }
+
+    if (isDirty && !options?.force) {
+      return { status: "needs-confirm" };
+    }
+
+    const handle = await getHandle(localFile.handleId);
+
+    if (!handle) {
+      get().clearLocalFileSource(currentDocument.id);
+      return { status: "missing" };
+    }
+
+    if (!(await verifyPermission(handle, "read"))) {
+      return { status: "denied" };
+    }
+
+    let filename: string;
+    let content: string;
+
+    try {
+      ({ filename, content } = await readHandle(handle));
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        get().clearLocalFileSource(currentDocument.id);
+        void deleteHandle(localFile.handleId);
+        return { status: "missing" };
+      }
+
+      return {
+        status: "error",
+        message: error instanceof Error ? error.message : "Failed to reload document",
+      };
+    }
+
+    const reloadedDocument: Document = {
+      ...currentDocument,
+      body: content,
+      localFile: {
+        ...localFile,
+        filename,
+        lastReloadedAt: new Date().toISOString(),
+      },
+    };
+    const documents = get().documents.map((document) =>
+      document.id === reloadedDocument.id ? reloadedDocument : document
+    );
+
+    get().editorInstance?.setValue(content);
+    set({ documents, currentDocument: reloadedDocument, isDirty: false });
+    get().persist();
+
+    return { status: "reloaded", filename };
+  },
+
+  clearLocalFileSource: (id: string) => {
+    const { documents, currentDocument } = get();
+    const updatedDocuments = documents.map((document) => {
+      if (document.id !== id) return document;
+
+      const documentWithoutLocalFile = { ...document };
+      delete documentWithoutLocalFile.localFile;
+      return documentWithoutLocalFile;
+    });
+    const updatedCurrentDocument = currentDocument?.id === id
+      ? updatedDocuments.find((document) => document.id === id) ?? null
+      : currentDocument;
+
+    set({ documents: updatedDocuments, currentDocument: updatedCurrentDocument });
     get().persist();
   },
 
@@ -325,6 +448,7 @@ export const useStore = create<AppState>((set, get) => ({
         isDirty: false,
         sidebarOpen: isFirstVisit,
       });
+      void pruneOrphanHandles(documents);
     } catch (e) {
       console.error("Failed to hydrate state:", e);
     }

@@ -1,3 +1,9 @@
+export interface LocalFileSource {
+  handleId: string;
+  filename: string;
+  lastReloadedAt?: string;
+}
+
 export interface Document {
   id: string;
   title: string;
@@ -10,6 +16,7 @@ export interface Document {
     owner: string;
     branch: string;
   };
+  localFile?: LocalFileSource;
 }
 
 export interface UserSettings {

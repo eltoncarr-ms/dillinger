@@ -2,7 +2,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Monaco from "monaco-editor";
 import { useStore } from "@/stores/store";
 import { DEFAULT_DOCUMENT_BODY, DEFAULT_SETTINGS } from "@/lib/types";
+import type { Document, LocalFileSource } from "@/lib/types";
 import { DEFAULT_DOCUMENT_TITLE } from "@/lib/document";
+
+const fileHandleMocks = vi.hoisted(() => ({
+  getHandle: vi.fn(),
+  deleteHandle: vi.fn(),
+  listHandleIds: vi.fn(),
+}));
+
+const fileSystemAccessMocks = vi.hoisted(() => ({
+  isFileSystemAccessSupported: vi.fn(),
+  verifyPermission: vi.fn(),
+  readHandle: vi.fn(),
+}));
+
+vi.mock("@/lib/fileHandles", () => fileHandleMocks);
+vi.mock("@/lib/fileSystemAccess", () => fileSystemAccessMocks);
 
 const initialState = useStore.getState();
 
@@ -28,21 +44,17 @@ function resetStore() {
   );
 }
 
-function createTestDocument(overrides: Partial<{
-  id: string;
-  title: string;
-  body: string;
-  createdAt: string;
-}> = {}) {
+function createTestDocument(overrides: Partial<Document> = {}): Document {
   return {
-    id: overrides.id ?? "doc-1",
-    title: overrides.title ?? "Test.md",
-    body: overrides.body ?? "# Test",
-    createdAt: overrides.createdAt ?? "2026-03-10T00:00:00.000Z",
+    id: "doc-1",
+    title: "Test.md",
+    body: "# Test",
+    createdAt: "2026-03-10T00:00:00.000Z",
+    ...overrides,
   };
 }
 
-function seedStoreWithDocuments(docs: ReturnType<typeof createTestDocument>[], currentIndex = 0) {
+function seedStoreWithDocuments(docs: Document[], currentIndex = 0) {
   useStore.setState(
     {
       ...useStore.getState(),
@@ -56,6 +68,13 @@ function seedStoreWithDocuments(docs: ReturnType<typeof createTestDocument>[], c
 describe("useStore", () => {
   beforeEach(() => {
     localStorage.clear();
+    vi.clearAllMocks();
+    fileHandleMocks.getHandle.mockResolvedValue(null);
+    fileHandleMocks.deleteHandle.mockResolvedValue(undefined);
+    fileHandleMocks.listHandleIds.mockResolvedValue([]);
+    fileSystemAccessMocks.isFileSystemAccessSupported.mockReturnValue(true);
+    fileSystemAccessMocks.verifyPermission.mockResolvedValue(true);
+    fileSystemAccessMocks.readHandle.mockResolvedValue({ filename: "Reloaded.md", content: "# Reloaded" });
     resetStore();
   });
 
@@ -81,7 +100,19 @@ describe("useStore", () => {
     expect(state.documents).toHaveLength(2);
     expect(state.currentDocument?.title).toBe("Imported.html");
     expect(state.currentDocument?.body).toBe("# Imported");
+    expect(state.currentDocument?.localFile).toBeUndefined();
     expect(state.documents[0]?.id).toBe(originalId);
+  });
+
+  it("attaches a local file source to imported documents when provided", () => {
+    const source: LocalFileSource = { handleId: "handle-1", filename: "Imported.md" };
+
+    useStore.getState().createImportedDocument("Imported.md", "# Imported", source);
+
+    const state = useStore.getState();
+
+    expect(state.currentDocument?.localFile).toEqual(source);
+    expect(state.documents[0]?.localFile).toEqual(source);
   });
 
   it("inserts markdown through the Monaco editor when a selection exists", () => {
@@ -559,6 +590,121 @@ describe("useStore", () => {
     });
   });
 
+  describe("reloadCurrentDocumentFromSource", () => {
+    const source: LocalFileSource = { handleId: "handle-1", filename: "Source.md" };
+    const handle = {} as FileSystemFileHandle;
+
+    it("returns no-source when the current document has no local file source", async () => {
+      seedStoreWithDocuments([createTestDocument()]);
+
+      await expect(useStore.getState().reloadCurrentDocumentFromSource()).resolves.toEqual({ status: "no-source" });
+    });
+
+    it("returns unsupported when File System Access is unavailable", async () => {
+      seedStoreWithDocuments([createTestDocument({ localFile: source })]);
+      fileSystemAccessMocks.isFileSystemAccessSupported.mockReturnValue(false);
+
+      await expect(useStore.getState().reloadCurrentDocumentFromSource()).resolves.toEqual({ status: "unsupported" });
+      expect(fileHandleMocks.getHandle).not.toHaveBeenCalled();
+    });
+
+    it("returns needs-confirm when the document is dirty and force is not set", async () => {
+      seedStoreWithDocuments([createTestDocument({ localFile: source })]);
+      useStore.setState({ ...useStore.getState(), isDirty: true }, true);
+
+      await expect(useStore.getState().reloadCurrentDocumentFromSource()).resolves.toEqual({ status: "needs-confirm" });
+      expect(fileHandleMocks.getHandle).not.toHaveBeenCalled();
+    });
+
+    it("skips the dirty confirmation when force is true", async () => {
+      seedStoreWithDocuments([createTestDocument({ localFile: source })]);
+      useStore.setState({ ...useStore.getState(), isDirty: true }, true);
+      fileHandleMocks.getHandle.mockResolvedValue(handle);
+
+      const result = await useStore.getState().reloadCurrentDocumentFromSource({ force: true });
+
+      expect(result).toEqual({ status: "reloaded", filename: "Reloaded.md" });
+      expect(fileSystemAccessMocks.readHandle).toHaveBeenCalledWith(handle);
+    });
+
+    it("returns missing and clears localFile when the handle is absent", async () => {
+      const doc = createTestDocument({ localFile: source });
+      seedStoreWithDocuments([doc]);
+      fileHandleMocks.getHandle.mockResolvedValue(null);
+
+      await expect(useStore.getState().reloadCurrentDocumentFromSource()).resolves.toEqual({ status: "missing" });
+
+      expect(useStore.getState().currentDocument?.localFile).toBeUndefined();
+      expect(useStore.getState().documents[0]?.localFile).toBeUndefined();
+    });
+
+    it("returns denied when read permission is refused", async () => {
+      seedStoreWithDocuments([createTestDocument({ localFile: source })]);
+      fileHandleMocks.getHandle.mockResolvedValue(handle);
+      fileSystemAccessMocks.verifyPermission.mockResolvedValue(false);
+
+      await expect(useStore.getState().reloadCurrentDocumentFromSource()).resolves.toEqual({ status: "denied" });
+      expect(fileSystemAccessMocks.readHandle).not.toHaveBeenCalled();
+    });
+
+    it("reloads the current document from its source", async () => {
+      const editor = { setValue: vi.fn() } as unknown as Monaco.editor.IStandaloneCodeEditor;
+      seedStoreWithDocuments([createTestDocument({ body: "# Old", localFile: source })]);
+      useStore.setState({ ...useStore.getState(), editorInstance: editor, isDirty: true }, true);
+      fileHandleMocks.getHandle.mockResolvedValue(handle);
+      fileSystemAccessMocks.readHandle.mockResolvedValue({ filename: "Source.md", content: "# New" });
+
+      const result = await useStore.getState().reloadCurrentDocumentFromSource({ force: true });
+      const reloaded = useStore.getState().currentDocument;
+
+      expect(result).toEqual({ status: "reloaded", filename: "Source.md" });
+      expect(reloaded?.body).toBe("# New");
+      expect(useStore.getState().documents[0]?.body).toBe("# New");
+      expect(useStore.getState().isDirty).toBe(false);
+      expect(reloaded?.localFile?.lastReloadedAt).toEqual(expect.any(String));
+      expect(editor.setValue).toHaveBeenCalledWith("# New");
+    });
+
+    it("returns missing, clears source, and deletes the handle when readHandle reports NotFoundError", async () => {
+      seedStoreWithDocuments([createTestDocument({ localFile: source })]);
+      fileHandleMocks.getHandle.mockResolvedValue(handle);
+      fileSystemAccessMocks.readHandle.mockRejectedValue({ name: "NotFoundError" });
+
+      await expect(useStore.getState().reloadCurrentDocumentFromSource()).resolves.toEqual({ status: "missing" });
+
+      expect(useStore.getState().currentDocument?.localFile).toBeUndefined();
+      expect(fileHandleMocks.deleteHandle).toHaveBeenCalledWith("handle-1");
+    });
+
+    it("returns error with a message when readHandle fails generically", async () => {
+      seedStoreWithDocuments([createTestDocument({ localFile: source })]);
+      fileHandleMocks.getHandle.mockResolvedValue(handle);
+      fileSystemAccessMocks.readHandle.mockRejectedValue(new Error("boom"));
+
+      await expect(useStore.getState().reloadCurrentDocumentFromSource()).resolves.toEqual({
+        status: "error",
+        message: "boom",
+      });
+    });
+  });
+
+  describe("clearLocalFileSource", () => {
+    it("removes localFile from the matching document without deleting the document", () => {
+      const source: LocalFileSource = { handleId: "handle-1", filename: "Source.md" };
+      const doc = createTestDocument({ id: "doc-1", localFile: source });
+      seedStoreWithDocuments([doc]);
+
+      useStore.getState().clearLocalFileSource("doc-1");
+
+      const state = useStore.getState();
+      expect(state.documents).toHaveLength(1);
+      expect(state.documents[0]?.id).toBe("doc-1");
+      expect(state.documents[0]?.localFile).toBeUndefined();
+      expect(state.currentDocument?.localFile).toBeUndefined();
+      expect(fileHandleMocks.deleteHandle).not.toHaveBeenCalled();
+    });
+  });
+
   describe("persist", () => {
     it("writes documents, currentDocument, and settings to localStorage", () => {
       const doc = createTestDocument({ id: "persist-1", title: "Persisted.md" });
@@ -682,6 +828,27 @@ describe("useStore", () => {
       expect(state.documents).toHaveLength(1);
       expect(state.documents[0]?.id).toBe("existing");
       expect(state.currentDocument?.id).toBe("existing");
+    });
+
+    it("deletes the stored handle when a document has a local file source", () => {
+      const doc = createTestDocument({
+        id: "with-source",
+        localFile: { handleId: "handle-1", filename: "Source.md" },
+      });
+      seedStoreWithDocuments([doc]);
+
+      useStore.getState().deleteDocument("with-source");
+
+      expect(fileHandleMocks.deleteHandle).toHaveBeenCalledWith("handle-1");
+    });
+
+    it("does not delete a stored handle when the document has no local file source", () => {
+      const doc = createTestDocument({ id: "without-source" });
+      seedStoreWithDocuments([doc]);
+
+      useStore.getState().deleteDocument("without-source");
+
+      expect(fileHandleMocks.deleteHandle).not.toHaveBeenCalled();
     });
   });
 
