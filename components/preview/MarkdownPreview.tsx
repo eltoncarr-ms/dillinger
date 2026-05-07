@@ -40,6 +40,17 @@ export function MarkdownPreview() {
     };
   }, [currentDocument?.body]);
 
+  // Manually apply sanitized HTML to the container so we control exactly when
+  // innerHTML is reset. Using React's dangerouslySetInnerHTML would re-apply
+  // on every re-render, wiping out the mermaid SVG that we inject below.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    if (container.innerHTML !== sanitizedHtml) {
+      container.innerHTML = sanitizedHtml;
+    }
+  }, [sanitizedHtml]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -50,15 +61,6 @@ export function MarkdownPreview() {
     let cancelled = false;
 
     (async () => {
-      nodes.forEach((node) => {
-        if (!node.dataset.source) {
-          node.dataset.source = node.textContent ?? "";
-        } else {
-          node.removeAttribute("data-processed");
-          node.innerHTML = node.dataset.source;
-        }
-      });
-
       try {
         const mermaidModule = await import("mermaid");
         if (cancelled) return;
@@ -69,9 +71,26 @@ export function MarkdownPreview() {
           theme: enableNightMode ? "dark" : "default",
           securityLevel: "strict",
         });
-        await mermaid.run({ nodes });
+
+        for (let i = 0; i < nodes.length; i++) {
+          if (cancelled) return;
+
+          const node = nodes[i];
+          const source = node.dataset.source ?? node.textContent ?? "";
+          node.dataset.source = source;
+
+          const renderId = `mermaid-${Math.random().toString(36).slice(2)}-${i}`;
+          try {
+            const { svg } = await mermaid.render(renderId, source);
+            if (cancelled) return;
+            node.innerHTML = svg;
+            node.setAttribute("data-processed", "true");
+          } catch {
+            // Leave the original source visible if a single diagram fails to render.
+          }
+        }
       } catch {
-        // Mermaid renders its own error state in the diagram block.
+        // Mermaid module failed to load; preview falls back to source text.
       }
     })();
 
@@ -131,7 +150,6 @@ export function MarkdownPreview() {
       className={`preview-html h-full overflow-auto p-6 ${
         enableNightMode ? 'dark bg-[#1e1e1e]' : 'bg-transparent'
       }`}
-      dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
     />
   );
 }

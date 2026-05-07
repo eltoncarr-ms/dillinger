@@ -44,3 +44,22 @@ test("renders a mermaid diagram in the preview pane", async ({ page }) => {
     page.locator('[data-testid="preview-pane"] pre.mermaid svg')
   ).toBeVisible({ timeout: 15_000 });
 });
+
+test("mermaid diagram persists after switching panel layouts", async ({ page }) => {
+  await page.goto("/");
+  const svg = page.locator('[data-testid="preview-pane"] pre.mermaid svg');
+  await expect(svg).toBeVisible({ timeout: 15_000 });
+
+  // Switch to preview-only, then back to split. Regression for the case where
+  // the diagram disappeared after a re-render because dangerouslySetInnerHTML
+  // re-applied the cached HTML and wiped out the injected SVG.
+  await page.getByRole("button", { name: "Focus preview", exact: true }).click();
+  await expect(svg).toBeVisible({ timeout: 5_000 });
+
+  await page.getByRole("button", { name: "Show both panes", exact: true }).click();
+  await expect(svg).toBeVisible({ timeout: 5_000 });
+
+  await page.getByRole("button", { name: "Focus editor", exact: true }).click();
+  await page.getByRole("button", { name: "Show both panes", exact: true }).click();
+  await expect(svg).toBeVisible({ timeout: 5_000 });
+});

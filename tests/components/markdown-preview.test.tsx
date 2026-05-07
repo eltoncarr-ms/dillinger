@@ -9,7 +9,7 @@ import { useStore } from "@/stores/store";
 vi.mock("mermaid", () => ({
   default: {
     initialize: vi.fn(),
-    run: vi.fn().mockResolvedValue(undefined),
+    render: vi.fn().mockResolvedValue({ svg: "<svg data-testid='m-svg'></svg>" }),
   },
 }));
 
@@ -85,12 +85,12 @@ describe("MarkdownPreview", () => {
     expect(container.querySelector("script")).not.toBeInTheDocument();
   });
 
-  it("calls mermaid.run when a mermaid block exists", async () => {
+  it("calls mermaid.render when a mermaid block exists", async () => {
     resetStore("```mermaid\nflowchart TD\nA-->B\n```");
 
     render(<MarkdownPreview />);
 
-    await waitFor(() => expect(mockedMermaid.run).toHaveBeenCalled());
+    await waitFor(() => expect(mockedMermaid.render).toHaveBeenCalled());
 
     expect(mockedMermaid.initialize).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -99,11 +99,9 @@ describe("MarkdownPreview", () => {
         securityLevel: "strict",
       })
     );
-    expect(mockedMermaid.run).toHaveBeenCalledWith({
-      nodes: expect.any(Array),
-    });
-    const [{ nodes }] = mockedMermaid.run.mock.calls[0];
-    expect(nodes.length).toBeGreaterThanOrEqual(1);
+    const [renderId, source] = mockedMermaid.render.mock.calls[0];
+    expect(typeof renderId).toBe("string");
+    expect(source).toContain("flowchart TD");
   });
 
   it("does not call mermaid when no mermaid block exists", async () => {
@@ -113,7 +111,7 @@ describe("MarkdownPreview", () => {
 
     await screen.findByRole("heading", { name: "No diagrams here" });
     expect(mockedMermaid.initialize).not.toHaveBeenCalled();
-    expect(mockedMermaid.run).not.toHaveBeenCalled();
+    expect(mockedMermaid.render).not.toHaveBeenCalled();
   });
 
   it("uses dark theme when nightMode is on", async () => {
