@@ -68,12 +68,13 @@ body {
 }
 
 .preview-html blockquote {
-  border-left: 4px solid #A0AABF;
-  padding-left: 1em;
-  margin-left: 0;
-  margin-bottom: 1em;
+  border-left: 4px solid #35D7BB;
+  padding: 0.75em 1em;
+  margin: 0 0 1em 0;
   font-style: italic;
-  color: #666;
+  color: #2B2F36;
+  background: #E4E9F2;
+  border-radius: 0 4px 4px 0;
 }
 
 .preview-html ul,
@@ -82,8 +83,28 @@ body {
   padding-left: 2em;
 }
 
+.preview-html ul {
+  list-style: disc outside;
+}
+
+.preview-html ol {
+  list-style: decimal outside;
+}
+
+.preview-html ul ul {
+  list-style: circle outside;
+}
+
+.preview-html ul ul ul {
+  list-style: square outside;
+}
+
 .preview-html li {
   margin-bottom: 0.25em;
+}
+
+.preview-html li::marker {
+  color: inherit;
 }
 
 .preview-html table {
@@ -147,6 +168,12 @@ body {
   margin-right: 0.5em;
 }
 
+.preview-html li.task-list-item,
+.preview-html li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.5em;
+}
+
 /* Dark Mode Styles */
 .dark.preview-html {
   color: #d4d4d4;
@@ -183,8 +210,9 @@ body {
 }
 
 .dark.preview-html blockquote {
-  border-left-color: #555;
-  color: #aaa;
+  border-left-color: #35D7BB;
+  color: #E8E8E8;
+  background: #1D212A;
 }
 
 .dark.preview-html th,

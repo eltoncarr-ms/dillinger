@@ -15,14 +15,31 @@ const DEFAULT_VIEWPORT = {
   height: 720,
 };
 
+const WINDOWS_PROGRAM_FILES = process.env["ProgramFiles"] || "C:\\Program Files";
+const WINDOWS_PROGRAM_FILES_X86 =
+  process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+const WINDOWS_LOCAL_APP_DATA =
+  process.env.LOCALAPPDATA || "C:\\Users\\Default\\AppData\\Local";
+
 const LOCAL_CHROME_CANDIDATES = [
   process.env.PUPPETEER_EXECUTABLE_PATH,
+  // macOS
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+  // Linux
   "/usr/bin/google-chrome-stable",
   "/usr/bin/google-chrome",
   "/usr/bin/chromium-browser",
   "/usr/bin/chromium",
+  "/usr/bin/microsoft-edge",
+  // Windows - Chrome
+  `${WINDOWS_PROGRAM_FILES}\\Google\\Chrome\\Application\\chrome.exe`,
+  `${WINDOWS_PROGRAM_FILES_X86}\\Google\\Chrome\\Application\\chrome.exe`,
+  `${WINDOWS_LOCAL_APP_DATA}\\Google\\Chrome\\Application\\chrome.exe`,
+  // Windows - Edge (Chromium-based)
+  `${WINDOWS_PROGRAM_FILES}\\Microsoft\\Edge\\Application\\msedge.exe`,
+  `${WINDOWS_PROGRAM_FILES_X86}\\Microsoft\\Edge\\Application\\msedge.exe`,
 ].filter((candidate): candidate is string => Boolean(candidate));
 
 function isServerlessRuntime() {
@@ -83,6 +100,7 @@ export async function renderPdfBuffer({
     title,
     html: renderedMarkdown,
     styled: true,
+    forPrint: true,
   });
 
   const executablePath = await resolveChromeExecutablePath();
