@@ -26,6 +26,11 @@ export default async function ApiKeysPage() {
     },
     orderBy: { createdAt: "desc" },
   });
+  const serializedKeys = keys.map((key) => ({
+    ...key,
+    createdAt: key.createdAt.toISOString(),
+    lastUsedAt: key.lastUsedAt?.toISOString() ?? null,
+  }));
 
   return (
     <div>
@@ -38,7 +43,7 @@ export default async function ApiKeysPage() {
 
       <div className="mt-8">
         <h2 className="text-lg font-semibold mb-4">Active Keys</h2>
-        <ApiKeyList initialKeys={keys} />
+        <ApiKeyList initialKeys={serializedKeys} />
       </div>
 
       <div className="mt-12 p-4 bg-bg-highlight rounded-lg text-sm text-text-muted space-y-2">

@@ -53,6 +53,7 @@ Open → [http://localhost:3000](http://localhost:3000)
 
 * Node.js 18+
 * npm / yarn / pnpm / bun
+* Docker with Docker Compose (optional)
 
 ---
 
@@ -195,6 +196,38 @@ Then:
 npm run build
 npm start
 ```
+
+### Docker Compose
+
+Copy the environment template and configure the integrations you use:
+
+```bash
+cp .env.local.example .env.local
+```
+
+Set `NEXT_PUBLIC_BASE_URL` to the externally accessible URL and update the
+matching OAuth callback URLs with each provider. `AUTH_TRUST_HOST=true` is
+required for Auth.js when self-hosting behind Docker or a reverse proxy.
+
+Build the current checkout with fresh base-image layers and deploy it:
+
+```bash
+docker compose build --pull
+docker compose up -d
+```
+
+The image is tagged `dillinger:latest`. Re-run both commands after pulling or
+checking out newer application source. Docker Compose loads `.env.local` at
+container startup when the file exists; secrets are not copied into the image.
+
+```bash
+docker compose ps
+docker compose logs -f app
+docker compose down
+```
+
+The host port defaults to `3000`. Override it with `DILLINGER_PORT`, for
+example `DILLINGER_PORT=8080 docker compose up -d`.
 
 ---
 

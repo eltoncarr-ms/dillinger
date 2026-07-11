@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      pull: true
+    image: dillinger:latest
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${DILLINGER_PORT:-3000}:3000"
+    env_file:
+      - path: .env.local
+        required: false
+    environment:
+      AUTH_TRUST_HOST: "true"
+    security_opt:
+      - no-new-privileges:true

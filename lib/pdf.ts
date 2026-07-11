@@ -46,6 +46,10 @@ function isServerlessRuntime() {
   return Boolean(process.env.VERCEL || process.env.AWS_EXECUTION_ENV);
 }
 
+function isContainerRuntime() {
+  return process.env.DILLINGER_CONTAINER === "true";
+}
+
 async function resolveChromeExecutablePath() {
   if (isServerlessRuntime()) {
     const executablePath = await chromium.executablePath();
@@ -82,6 +86,9 @@ function getLaunchOptions(executablePath: string) {
   }
 
   return {
+    args: isContainerRuntime()
+      ? ["--no-sandbox", "--disable-setuid-sandbox"]
+      : undefined,
     defaultViewport: DEFAULT_VIEWPORT,
     executablePath,
     headless: true,
